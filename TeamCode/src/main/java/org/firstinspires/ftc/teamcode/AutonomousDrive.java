@@ -44,11 +44,11 @@ public class AutonomousDrive {
     private static double errorSumRangeD = 5;
 
     //For Turn Movement
-    private static double kTP = 1;
-    private static double kTI = 0;
-    private static double kTD = 0;
+    private static double kTP = 0.25;
+    private static double kTI = 0.01;
+    private static double kTD = 0.02;
     private static double errorSumT = 0;
-    private static double errorSumRangeT = 5;
+    private static double errorSumRangeT = 25;
 
 
 
@@ -344,10 +344,81 @@ public class AutonomousDrive {
             drive(v2,v4,v3,v1);
         }
         opMode.sleep(50);
-
-
-
-
-
     }
+
+    public void goToPointLinear(double targetX, double targetY, double targetHeading){
+        odo.update();
+
+        double targetXDist = targetX - getX();
+        double targetYDist = targetY - getY();
+        double totalDist = Math.hypot(targetXDist, targetYDist);
+
+
+        double startHeading = getHeading();
+        double turn = turnPID(startHeading);
+
+        double startTime = opMode.time;
+
+
+        while(!checkTime(startTime,opMode.time) && (Math.abs(targetXDist) > POS_ERROR_TOLERANCE
+                ||  Math.abs(targetYDist) > POS_ERROR_TOLERANCE || Math.abs(getAngleToGo(startHeading)) > HEADING_ERROR_TOLERANCE)
+                && opMode.opModeIsActive()) {
+
+            odo.update();
+            outputInfo();
+
+            targetXDist = targetX - getX();
+            targetYDist = targetY - getY();
+            totalDist = Math.hypot(targetXDist, targetYDist);
+
+            double currentHeading = getHeadingNorm();
+
+            double angleToGo = getAngleToGo(startHeading);
+
+            double v1 = 0;// lf
+            double v2 = 0; // rf
+            double v3 = 0; // lb
+            double v4 = 0; // rb
+
+
+            double y = -movePID(targetXDist); // Remember, Y stick value is reversed
+            double x = movePID(targetYDist);
+            double rx = turnPID(angleToGo);
+            // Rotate the movement direction counter to the bot's rotation
+            double rotX = x * Math.cos(-currentHeading) - y * Math.sin(-currentHeading);
+            double rotY = x * Math.sin(-currentHeading) + y * Math.cos(-currentHeading);
+
+            rotX = rotX * 1.1;  // Counteract imperfect strafing
+
+            // Denominator is the largest motor power (absolute value) or 1
+            // This ensures all the powers maintain the same ratio,
+            // but only if at least one is out of the range [-1, 1]
+            double denominator = Math.max(Math.abs(rotY) + Math.abs(rotX) + Math.abs(rx), 1);
+            v1 = (rotY + rotX + rx) / denominator;
+            v3 = (rotY - rotX + rx) / denominator;
+            v2 = (rotY - rotX - rx) / denominator;
+            v4 = (rotY + rotX - rx) / denominator;
+
+
+
+            drive(v2,v4,v3,v1);
+        }
+        opMode.sleep(50);
+    }
+
+    public void goToHeading(double heading){
+        heading = Math.abs(heading) % 360;
+        odo.update();
+        double currentHeading = getHeading();
+        double angleToGo = getAngleToGo(heading);
+        double power;
+        while(angleToGo > HEADING_ERROR_TOLERANCE){
+            outputInfo();
+            power = turnPID(angleToGo);
+            drive(power, power,-power,-power);
+        }
+        opMode.sleep(50);
+    }
+
+
 }

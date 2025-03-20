@@ -20,7 +20,13 @@ public class TestPID extends LinearOpMode {
                     ad.setPID(h/2, k/10, k/10, 0);
                     ad.goToPointConstantHeading(30, 24);
                     sleep(1000);
-                    ad.goToPointConstantHeading(8, 36);
+                    ad.goToHeading(270);
+                    sleep(500);
+                    ad.goToPointConstantHeading(16, 36);
+                    ad.goToHeading(180);
+                    ad.goToPointConstantHeading(8,36);
+                    sleep(500);
+
                 }
             }
         }
