@@ -103,6 +103,12 @@ public class AutonomousDrive {
     private double[][] masterStartPoses = new double[][] { pos1, pos2};
 
 
+    //Background Varables
+
+    public static double timeLimit = 0;
+    public static boolean outInfo = true;
+
+
 
 
 
@@ -155,6 +161,7 @@ public class AutonomousDrive {
         lb.setPower(lbPower);
         lf.setPower(lfPower);
     }
+
     public GoBildaPinpointDriver getPinPoint(){return odo; }
 
     public Pose2D getPos(){return  odo.getPosition(); }
@@ -213,6 +220,53 @@ public class AutonomousDrive {
         return list;
     }
 
+    public void setPID(double kP, double kI, double kD, int PIDNum){
+        switch (PIDNum){
+            case 0:
+                kDP = kP;
+                kDI = kI;
+                kDD = kD;
+                break;
+            case 1:
+                kTP = kP;
+                kTI = kI;
+                kTD = kD;
+                break;
+
+        }
+    }
+
+
+    //Set Limit to 0 if you don't want a time limit
+    //Default is 0
+    public static void setTimeLimit(double time){
+        timeLimit = time;
+    }
+
+    public boolean checkTime(double startTime, double currentTime){
+        if((currentTime - startTime) >= timeLimit){
+            return true;
+        }else {
+            return false;
+        }
+    }
+
+    public void setOutputInfo(boolean val){
+        outInfo = val;
+    }
+
+    public void outputInfo(){
+        if(outInfo){
+            opMode.telemetry.addData("X pos: ", getX());
+            opMode.telemetry.addData("Y pos: ", getY());
+            opMode.telemetry.addData("Heading: ", getHeading());
+            opMode.telemetry.addData("Heading Norm: ", getHeadingNorm());
+            opMode.telemetry.addData("Heading UnNorm: ", odo.getHeading());
+            opMode.telemetry.update();
+        }
+    }
+
+
     //PIDs
 
     private static double movePID(double error){
@@ -243,9 +297,16 @@ public class AutonomousDrive {
         double startHeading = getHeading();
         double turn = turnPID(startHeading);
 
+        double startTime = opMode.time;
 
-        while((Math.abs(targetXDist) > POS_ERROR_TOLERANCE ||  Math.abs(targetYDist) > POS_ERROR_TOLERANCE || Math.abs(getAngleToGo(startHeading)) > HEADING_ERROR_TOLERANCE) && opMode.opModeIsActive()) {
+
+        while(!checkTime(startTime,opMode.time) && (Math.abs(targetXDist) > POS_ERROR_TOLERANCE
+                ||  Math.abs(targetYDist) > POS_ERROR_TOLERANCE || Math.abs(getAngleToGo(startHeading)) > HEADING_ERROR_TOLERANCE)
+                && opMode.opModeIsActive()) {
+
             odo.update();
+            outputInfo();
+
             targetXDist = targetX - getX();
             targetYDist = targetY - getY();
             totalDist = Math.hypot(targetXDist, targetYDist);

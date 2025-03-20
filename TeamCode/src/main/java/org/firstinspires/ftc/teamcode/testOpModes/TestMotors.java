@@ -1,4 +1,10 @@
 package org.firstinspires.ftc.teamcode.testOpModes;
 
-public class TestMotors {
+import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
+
+public class TestMotors extends LinearOpMode {
+    @Override
+    public void runOpMode() throws InterruptedException{
+
+    }
 }
