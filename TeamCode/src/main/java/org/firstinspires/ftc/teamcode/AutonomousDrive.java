@@ -34,13 +34,15 @@ public class AutonomousDrive {
     private final double HEADING_ERROR_TOLERANCE = 0.01;
 
     private final double MAX_MOTOR_CURRENT = 9.5;
+    private final double DEAD_WHEEL_RADIUS_MM = 16;
     //PID controls
 
     //For Drive Movement
     private static double kDP = 1;
     private static double kDI = 0;
     private static double kDD = 0;
-    private static double errorSumD = 0;
+    private static double errorSumDX = 0;
+    private static double errorSumDY = 0;
     private static double errorSumRangeD = 5;
 
     //For Turn Movement
@@ -113,6 +115,46 @@ public class AutonomousDrive {
 
 
     //Default Constructor
+    public AutonomousDrive(LinearOpMode opMode){
+        this.opMode = opMode;
+
+        lf = opMode.hardwareMap.get(DcMotorEx.class, leftFrontName);
+        lb = opMode.hardwareMap.get(DcMotorEx.class, leftBackName);
+        rf = opMode.hardwareMap.get(DcMotorEx.class, rightFrontName);
+        rb = opMode.hardwareMap.get(DcMotorEx.class, rightBackName);
+
+        leftFrontNum = lf.getPortNumber();
+        leftBackNum = lb.getPortNumber();
+        rightFrontNum = rf.getPortNumber();
+        rightBackNum = rb.getPortNumber();
+
+        motorControllerEx = (DcMotorControllerEx)(lf.getController());
+
+        motorCurrents = getMotorCurrents();
+
+        motorControllerEx.setMotorCurrentAlert(leftFrontNum, MAX_MOTOR_CURRENT, CurrentUnit.AMPS);
+        motorControllerEx.setMotorCurrentAlert(leftBackNum, MAX_MOTOR_CURRENT, CurrentUnit.AMPS);
+        motorControllerEx.setMotorCurrentAlert(rightFrontNum, MAX_MOTOR_CURRENT, CurrentUnit.AMPS);
+        motorControllerEx.setMotorCurrentAlert(rightBackNum, MAX_MOTOR_CURRENT, CurrentUnit.AMPS);
+
+        odo = opMode.hardwareMap.get(GoBildaPinpointDriver.class, odoName);
+
+        //Pinpoint offsets from Center in mm
+        //Left is +X, Front is +Y
+        odo.setOffsets(xoffset, yoffset);
+        odo.setEncoderDirections(xDirection, yDirection);
+        odo.setEncoderResolution(encoderPod);
+
+        odo.recalibrateIMU();
+        opMode.sleep(50);
+        odo.resetPosAndIMU();
+        opMode.sleep(50);
+
+        odo.setPosition(new Pose2D(DistanceUnit.INCH, masterStartPoses[0][1],masterStartPoses[0][0], AngleUnit.DEGREES, masterStartPoses[0][0]));
+        opMode.sleep(10);
+    }
+
+    //Constructor with different pose
     public AutonomousDrive(LinearOpMode opMode, int startPos){
         this.opMode = opMode;
 
@@ -164,18 +206,39 @@ public class AutonomousDrive {
 
     public GoBildaPinpointDriver getPinPoint(){return odo; }
 
+    public DcMotorEx getMotor(int num){
+        switch (num){
+            case 0:
+                return lf;
+            case 1:
+                return lb;
+            case 2:
+                return rf;
+            case 3:
+                return rb;
+
+        }
+        return lf;
+    }
+
     public Pose2D getPos(){return  odo.getPosition(); }
     public double getX(){return  odo.getPosition().getX(DistanceUnit.INCH); }
     public double getY(){return  odo.getPosition().getY(DistanceUnit.INCH); }
 
+    //getHeading outputs 0-360
     public double getHeading(){
         double rawHeading = odo.getPosition().getHeading(AngleUnit.DEGREES);
         return  rawHeading + 180;
     }
-
+    //getHeadingNorm outputs -180-180
     public double getHeadingNorm(){
         return odo.getPosition().getHeading(AngleUnit.DEGREES);
     }
+    //getHeadingUnNorm outputs -inf-inf
+    public double getHeadingUnNorm(){
+        return odo.getHeading();
+    }
+
 
     public double getAngleToGo(double targetHeading){
         targetHeading = Math.abs(targetHeading) % 360;
@@ -266,13 +329,28 @@ public class AutonomousDrive {
         }
     }
 
+    public double turnSlope(double targetHeading, double startHeading, double currentDist, double startDist){
+        return ((startHeading-targetHeading)/startDist) * (currentDist - startDist) + startHeading;
+    }
+
+    public double inchesToTicks(double dist){
+        return (dist * 25.4 * 2000)/ (DEAD_WHEEL_RADIUS_MM * 2 * Math.PI);
+    }
+
 
     //PIDs
 
-    private static double movePID(double error){
-        double output = error * kDP - error * kDD + errorSumD*kDI;
+    private static double movePID(double error, String axis){
+        double output = error * kDP - error * kDD;
         if(Math.abs(error) <= errorSumRangeD){
-            errorSumD += error;
+            if(axis.toLowerCase().charAt(0) == 'y'){
+                errorSumDY+= error;
+                output += errorSumDY*kDI;
+            }
+            if(axis.toLowerCase().charAt(0) == 'x'){
+                errorSumDX+= error;
+                output += errorSumDX*kDI;
+            }
         }
         return output;
     }
@@ -285,9 +363,24 @@ public class AutonomousDrive {
         return output;
     }
 
+
     //Movement
+
+    public void forward(double distance){
+        double power = movePID(distance, "x");
+        double startPose = odo.getEncoderX();
+        double targetPose = inchesToTicks(distance) + startPose;
+        while(targetPose - startPose> 5) {
+            power = movePID(targetPose - startPose, "x");
+            drive(power, power, power, power);
+        }
+    }
     public void goToPointConstantHeading(double targetX, double targetY){
         odo.update();
+
+        errorSumDX = 0;
+        errorSumDY = 0;
+        errorSumT = 0;
 
         double targetXDist = targetX - getX();
         double targetYDist = targetY - getY();
@@ -311,7 +404,7 @@ public class AutonomousDrive {
             targetYDist = targetY - getY();
             totalDist = Math.hypot(targetXDist, targetYDist);
 
-            double currentHeading = getHeadingNorm();
+            double currentHeadingRad = Math.toRadians(getHeadingNorm());
 
             double angleToGo = getAngleToGo(startHeading);
 
@@ -321,12 +414,12 @@ public class AutonomousDrive {
             double v4 = 0; // rb
 
 
-            double y = -movePID(targetXDist); // Remember, Y stick value is reversed
-            double x = movePID(targetYDist);
+            double y = -movePID(targetXDist,"y"); // Remember, Y stick value is reversed
+            double x = movePID(targetYDist,"x");
             double rx = turnPID(angleToGo);
             // Rotate the movement direction counter to the bot's rotation
-            double rotX = x * Math.cos(-currentHeading) - y * Math.sin(-currentHeading);
-            double rotY = x * Math.sin(-currentHeading) + y * Math.cos(-currentHeading);
+            double rotX = x * Math.cos(-currentHeadingRad) - y * Math.sin(-currentHeadingRad);
+            double rotY = x * Math.sin(-currentHeadingRad) + y * Math.cos(-currentHeadingRad);
 
             rotX = rotX * 1.1;  // Counteract imperfect strafing
 
@@ -353,27 +446,31 @@ public class AutonomousDrive {
         double targetYDist = targetY - getY();
         double totalDist = Math.hypot(targetXDist, targetYDist);
 
+        double startDist = totalDist;
 
         double startHeading = getHeading();
-        double turn = turnPID(startHeading);
+        double headingdist = targetHeading - startHeading;
+        double currentTargetHead = turnSlope(targetHeading, startHeading, totalDist, startDist);
+
 
         double startTime = opMode.time;
 
 
         while(!checkTime(startTime,opMode.time) && (Math.abs(targetXDist) > POS_ERROR_TOLERANCE
-                ||  Math.abs(targetYDist) > POS_ERROR_TOLERANCE || Math.abs(getAngleToGo(startHeading)) > HEADING_ERROR_TOLERANCE)
+                ||  Math.abs(targetYDist) > POS_ERROR_TOLERANCE || Math.abs(getAngleToGo(currentTargetHead)) > HEADING_ERROR_TOLERANCE)
                 && opMode.opModeIsActive()) {
 
             odo.update();
             outputInfo();
+            ;
 
             targetXDist = targetX - getX();
             targetYDist = targetY - getY();
             totalDist = Math.hypot(targetXDist, targetYDist);
 
-            double currentHeading = getHeadingNorm();
-
-            double angleToGo = getAngleToGo(startHeading);
+            double currentHeadingRad = Math.toRadians(getHeadingNorm());
+            currentTargetHead = turnSlope(targetHeading, startHeading, totalDist, startDist);
+            double angleToGo = getAngleToGo(currentTargetHead);
 
             double v1 = 0;// lf
             double v2 = 0; // rf
@@ -381,12 +478,12 @@ public class AutonomousDrive {
             double v4 = 0; // rb
 
 
-            double y = -movePID(targetXDist); // Remember, Y stick value is reversed
-            double x = movePID(targetYDist);
+            double y = -movePID(targetXDist, "y"); // Remember, Y stick value is reversed
+            double x = movePID(targetYDist, "x");
             double rx = turnPID(angleToGo);
             // Rotate the movement direction counter to the bot's rotation
-            double rotX = x * Math.cos(-currentHeading) - y * Math.sin(-currentHeading);
-            double rotY = x * Math.sin(-currentHeading) + y * Math.cos(-currentHeading);
+            double rotX = x * Math.cos(-currentHeadingRad) - y * Math.sin(-currentHeadingRad);
+            double rotY = x * Math.sin(-currentHeadingRad) + y * Math.cos(-currentHeadingRad);
 
             rotX = rotX * 1.1;  // Counteract imperfect strafing
 
@@ -419,6 +516,4 @@ public class AutonomousDrive {
         }
         opMode.sleep(50);
     }
-
-
 }
